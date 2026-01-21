@@ -17,6 +17,16 @@ CSV_FIELDNAMES = [
     "URL",
 ]
 
+SHEET_COLUMNS = [
+    "Company",
+    "Job title",
+    "Location",
+    "Salary (k)",
+    "URL",
+    "Date applied",
+    "Status",
+]
+
 
 def _parse_int(value: Optional[str]) -> Optional[int]:
     if value is None:
@@ -93,6 +103,39 @@ def print_job(row: Dict[str, Optional[str]]) -> None:
         print(f"{name}: {_na(row.get(name))}")
 
 
+def append_to_google_sheet(
+    sheet_id: str, sheet_tab: str, row: Dict[str, Optional[str]], credentials_path: str
+) -> None:
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Missing Google Sheets dependencies. Install gspread and google-auth."
+        ) from exc
+
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds = Credentials.from_service_account_file(credentials_path, scopes=scopes)
+    client = gspread.authorize(creds)
+    worksheet = client.open_by_key(sheet_id).worksheet(sheet_tab)
+
+    existing_ids = worksheet.col_values(1)
+    if not existing_ids:
+        worksheet.update("A1:G1", [SHEET_COLUMNS])
+        existing_ids = ["Company"]
+    values = [
+        row.get("Company", ""),
+        row.get("Title", ""),
+        row.get("Location", ""),
+        row.get("Pay", ""),
+        row.get("URL", ""),
+        row.get("Date Applied", ""),
+        "Unknown",
+    ]
+    next_row = len(existing_ids) + 1
+    worksheet.update(f"A{next_row}:G{next_row}", [values], value_input_option="USER_ENTERED")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Scrape a job posting into CSV.")
     parser.add_argument("url", help="Job posting URL")
@@ -106,6 +149,26 @@ def main() -> int:
         "--no-csv",
         action="store_true",
         help="Print to console only; skip writing CSV.",
+    )
+    parser.add_argument(
+        "--google-sheet-id",
+        default=os.getenv("GOOGLE_SHEET_ID") or "1f-GQW4opwV8sH5XBpADxGKNvvx8Q1mv6W4JNibagXu8",
+        help="Google Sheet ID (env: GOOGLE_SHEET_ID).",
+    )
+    parser.add_argument(
+        "--google-sheet-tab",
+        default=os.getenv("GOOGLE_SHEET_TAB") or "Tracker",
+        help="Google Sheet tab name (env: GOOGLE_SHEET_TAB).",
+    )
+    parser.add_argument(
+        "--google-credentials",
+        default=os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON"),
+        help="Service account JSON path (env: GOOGLE_SERVICE_ACCOUNT_JSON).",
+    )
+    parser.add_argument(
+        "--no-sheets",
+        action="store_true",
+        help="Skip writing to Google Sheets.",
     )
     args = parser.parse_args()
 
@@ -123,6 +186,20 @@ def main() -> int:
     if not args.no_csv:
         write_csv(args.output, row)
         print(f"Saved job data to {args.output}")
+    if not args.no_sheets:
+        provided = [args.google_sheet_id, args.google_sheet_tab, args.google_credentials]
+        if all(provided):
+            append_to_google_sheet(
+                args.google_sheet_id,
+                args.google_sheet_tab,
+                row,
+                args.google_credentials,
+            )
+            print("Saved job data to Google Sheets")
+        elif any(provided):
+            print(
+                "Google Sheets not configured: provide sheet id, tab, and credentials."
+            )
     return 0
 
 

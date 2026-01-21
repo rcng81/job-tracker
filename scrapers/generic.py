@@ -110,17 +110,118 @@ def _normalize_salary(job: Dict[str, Any]) -> Optional[str]:
     if not isinstance(base, dict):
         return None
     value = base.get("value")
+    unit = None
     if isinstance(value, dict):
         min_val = value.get("minValue")
         max_val = value.get("maxValue")
         unit = value.get("unitText")
-        if min_val and max_val:
-            return f"{min_val}-{max_val} {unit or ''}".strip()
-        if min_val:
-            return f"{min_val} {unit or ''}".strip()
+        range_text = _format_salary_range(min_val, max_val, unit)
+        if range_text:
+            return range_text
+        min_text = _format_salary_value(min_val, unit)
+        if min_text:
+            return min_text
     elif value:
-        return str(value)
+        return _format_salary_value(value, unit)
     return None
+
+
+def _format_salary_value(raw_value: Any, unit: Optional[str]) -> Optional[str]:
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, str):
+        text = raw_value.strip()
+        if not text:
+            return None
+        return _normalize_salary_text(text)
+    try:
+        numeric = float(raw_value)
+    except (TypeError, ValueError):
+        return None
+
+    unit_text = (unit or "").lower()
+    if numeric >= 1000 and ("year" in unit_text or "yr" in unit_text or not unit_text):
+        thousands = numeric / 1000.0
+        if thousands.is_integer():
+            return f"{int(thousands)}k"
+        return f"{thousands:.1f}k"
+    if numeric.is_integer():
+        return str(int(numeric))
+    return str(numeric)
+
+
+def _format_salary_range(
+    min_value: Any, max_value: Any, unit: Optional[str]
+) -> Optional[str]:
+    if min_value is None or max_value is None:
+        return None
+    try:
+        min_num = float(min_value)
+        max_num = float(max_value)
+    except (TypeError, ValueError):
+        return None
+
+    unit_text = (unit or "").lower()
+    if min_num >= 1000 and max_num >= 1000 and (
+        "year" in unit_text or "yr" in unit_text or not unit_text
+    ):
+        min_k = min_num / 1000.0
+        max_k = max_num / 1000.0
+        min_text = f"{int(min_k)}" if min_k.is_integer() else f"{min_k:.1f}"
+        max_text = f"{int(max_k)}" if max_k.is_integer() else f"{max_k:.1f}"
+        return f"{min_text}-{max_text}k"
+    return None
+
+
+def _normalize_salary_text(text: str) -> Optional[str]:
+    raw = text.strip()
+    if not raw:
+        return None
+
+    lowered = raw.lower()
+    if "k" in lowered:
+        return raw
+    if "hr" in lowered or "hour" in lowered:
+        return raw
+
+    matches = re.findall(r"\d[\d,]*(?:\.\d+)?", raw)
+    if not matches:
+        return raw
+
+    numbers = []
+    for match in matches:
+        try:
+            numbers.append(float(match.replace(",", "")))
+        except ValueError:
+            continue
+    if not numbers:
+        return raw
+
+    def _to_k(value: float) -> str:
+        thousands = value / 1000.0
+        if thousands.is_integer():
+            return f"{int(thousands)}k"
+        return f"{thousands:.1f}k"
+
+    if all(value < 1000 for value in numbers):
+        if len(numbers) == 2:
+            return f"{numbers[0]:g}-{numbers[1]:g}"
+        return f"{numbers[0]:g}"
+
+    if len(numbers) >= 2:
+        first, second = numbers[0], numbers[1]
+        if first >= 1000 and second >= 1000:
+            first_k = first / 1000.0
+            second_k = second / 1000.0
+            first_text = f"{int(first_k)}" if first_k.is_integer() else f"{first_k:.1f}"
+            second_text = (
+                f"{int(second_k)}" if second_k.is_integer() else f"{second_k:.1f}"
+            )
+            return f"{first_text}-{second_text}k"
+        return f"{first:g}-{second:g}"
+
+    formatted = _to_k(numbers[0])
+    return formatted
 
 
 def _normalize_work_mode(job: Dict[str, Any]) -> Optional[str]:
@@ -293,6 +394,8 @@ def scrape_generic(url: str) -> Dict[str, Optional[str]]:
             ".compensation",
         ],
     )
+    if pay:
+        pay = _normalize_salary_text(pay)
 
     return {
         "url": url,
