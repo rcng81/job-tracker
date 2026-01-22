@@ -182,9 +182,10 @@ def main() -> int:
         "Date Applied": args.date_applied,
         "URL": job.get("url"),
     }
-    print_job(row)
+    display_row = {key: _na(value) for key, value in row.items()}
+    print_job(display_row)
     if not args.no_csv:
-        write_csv(args.output, row)
+        write_csv(args.output, display_row)
         print(f"Saved job data to {args.output}")
     if not args.no_sheets:
         provided = [args.google_sheet_id, args.google_sheet_tab, args.google_credentials]
@@ -192,7 +193,7 @@ def main() -> int:
             append_to_google_sheet(
                 args.google_sheet_id,
                 args.google_sheet_tab,
-                row,
+                display_row,
                 args.google_credentials,
             )
             print("Saved job data to Google Sheets")
