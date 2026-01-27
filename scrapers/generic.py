@@ -1,4 +1,5 @@
 import json
+import math
 import re
 from typing import Any, Dict, Optional
 
@@ -141,10 +142,8 @@ def _format_salary_value(raw_value: Any, unit: Optional[str]) -> Optional[str]:
 
     unit_text = (unit or "").lower()
     if numeric >= 1000 and ("year" in unit_text or "yr" in unit_text or not unit_text):
-        thousands = numeric / 1000.0
-        if thousands.is_integer():
-            return f"{int(thousands)}k"
-        return f"{thousands:.1f}k"
+        thousands = math.floor(numeric / 1000.0)
+        return f"{int(thousands)}k"
     if numeric.is_integer():
         return str(int(numeric))
     return str(numeric)
@@ -165,11 +164,9 @@ def _format_salary_range(
     if min_num >= 1000 and max_num >= 1000 and (
         "year" in unit_text or "yr" in unit_text or not unit_text
     ):
-        min_k = min_num / 1000.0
-        max_k = max_num / 1000.0
-        min_text = f"{int(min_k)}" if min_k.is_integer() else f"{min_k:.1f}"
-        max_text = f"{int(max_k)}" if max_k.is_integer() else f"{max_k:.1f}"
-        return f"{min_text}-{max_text}k"
+        min_k = math.floor(min_num / 1000.0)
+        max_k = math.floor(max_num / 1000.0)
+        return f"{int(min_k)}-{int(max_k)}k"
     return None
 
 
@@ -198,10 +195,8 @@ def _normalize_salary_text(text: str) -> Optional[str]:
         return raw
 
     def _to_k(value: float) -> str:
-        thousands = value / 1000.0
-        if thousands.is_integer():
-            return f"{int(thousands)}k"
-        return f"{thousands:.1f}k"
+        thousands = math.floor(value / 1000.0)
+        return f"{int(thousands)}k"
 
     if all(value < 1000 for value in numbers):
         if len(numbers) == 2:
@@ -211,13 +206,11 @@ def _normalize_salary_text(text: str) -> Optional[str]:
     if len(numbers) >= 2:
         first, second = numbers[0], numbers[1]
         if first >= 1000 and second >= 1000:
-            first_k = first / 1000.0
-            second_k = second / 1000.0
-            first_text = f"{int(first_k)}" if first_k.is_integer() else f"{first_k:.1f}"
-            second_text = (
-                f"{int(second_k)}" if second_k.is_integer() else f"{second_k:.1f}"
-            )
-            return f"{first_text}-{second_text}k"
+            first_k = math.floor(first / 1000.0)
+            second_k = math.floor(second / 1000.0)
+            return f"{int(first_k)}-{int(second_k)}k"
+    if numbers and numbers[0] >= 1000:
+        return _to_k(numbers[0])
         return f"{first:g}-{second:g}"
 
     formatted = _to_k(numbers[0])
