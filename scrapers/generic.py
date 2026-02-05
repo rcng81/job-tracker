@@ -141,6 +141,8 @@ def _format_salary_value(raw_value: Any, unit: Optional[str]) -> Optional[str]:
         return None
 
     unit_text = (unit or "").lower()
+    if "hour" in unit_text or "hr" in unit_text:
+        return f"{numeric:g}/hr"
     if numeric >= 1000 and ("year" in unit_text or "yr" in unit_text or not unit_text):
         thousands = math.floor(numeric / 1000.0)
         return f"{int(thousands)}k"
@@ -161,6 +163,8 @@ def _format_salary_range(
         return None
 
     unit_text = (unit or "").lower()
+    if "hour" in unit_text or "hr" in unit_text:
+        return f"{min_num:g}-{max_num:g}/hr"
     if min_num >= 1000 and max_num >= 1000 and (
         "year" in unit_text or "yr" in unit_text or not unit_text
     ):
@@ -179,7 +183,20 @@ def _normalize_salary_text(text: str) -> Optional[str]:
     if "k" in lowered:
         return raw
     if "hr" in lowered or "hour" in lowered:
-        return raw
+        matches = re.findall(r"\d[\d,]*(?:\.\d+)?", raw)
+        if not matches:
+            return raw
+        numbers = []
+        for match in matches:
+            try:
+                numbers.append(float(match.replace(",", "")))
+            except ValueError:
+                continue
+        if not numbers:
+            return raw
+        if len(numbers) >= 2:
+            return f"{numbers[0]:g}-{numbers[1]:g}/hr"
+        return f"{numbers[0]:g}/hr"
 
     matches = re.findall(r"\d[\d,]*(?:\.\d+)?", raw)
     if not matches:
@@ -299,6 +316,13 @@ def _find_location_in_text(text: str) -> Optional[str]:
     return None
 
 
+def _prefer_remote_location(location: Optional[str], text: str) -> Optional[str]:
+    lowered = text.lower()
+    if (location and "remote" in location.lower()) or "remote" in lowered:
+        return "Remote"
+    return location
+
+
 def _find_work_mode_in_text(text: str) -> Optional[str]:
     lowered = text.lower()
     if "remote" in lowered:
@@ -331,6 +355,7 @@ def scrape_generic(url: str) -> Dict[str, Optional[str]]:
         location = _normalize_location(job)
         if not location:
             location = _find_location_in_text(soup.get_text(" ", strip=True))
+        location = _prefer_remote_location(location, soup.get_text(" ", strip=True))
         pay = _normalize_salary(job)
         posted = job.get("datePosted")
         work_mode = _normalize_work_mode(job) or _find_work_mode_in_text(
@@ -367,6 +392,7 @@ def scrape_generic(url: str) -> Dict[str, Optional[str]]:
     )
     if not location:
         location = _find_location_in_text(soup.get_text(" ", strip=True))
+    location = _prefer_remote_location(location, soup.get_text(" ", strip=True))
     work_mode_hint = _first_text(
         soup,
         [
