@@ -41,6 +41,7 @@ Built to explore web scraping, structured data parsing (JSON-LD), API integratio
   <img src="https://img.shields.io/badge/Google Sheets API-34A853?style=for-the-badge&logo=google&logoColor=white" /> 
   <img src="https://img.shields.io/badge/REST API-000000?style=for-the-badge" /> 
 </div>
+
 ### Dev Tools
 <div align="left"> 
   <img src="https://img.shields.io/badge/Git-F05032?style=for-the-badge&logo=git&logoColor=white" /> 
