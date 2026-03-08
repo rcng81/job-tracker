@@ -106,6 +106,18 @@ def _normalize_location(job: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _clean_location_value(raw: Optional[str]) -> Optional[str]:
+    if not raw:
+        return None
+    text = re.sub(r"\s+", " ", raw).strip(" ,")
+    if not text:
+        return None
+    lowered = text.lower()
+    if lowered in {"remote", "hybrid", "on-site", "onsite", "on site"}:
+        return None
+    return text
+
+
 def _normalize_salary(job: Dict[str, Any]) -> Optional[str]:
     base = job.get("baseSalary")
     if not isinstance(base, dict):
@@ -303,38 +315,23 @@ _US_STATES = {
 
 
 def _find_location_in_text(text: str) -> Optional[str]:
-    pattern = re.compile(r"\b([A-Z][a-zA-Z]+(?:[ -][A-Z][a-zA-Z]+)*)\s*,\s*([A-Z]{2})\b")
+    pattern = re.compile(
+        r"\b([A-Z][a-zA-Z]+(?:[ -][A-Z][a-zA-Z]+)*)\s*,\s*([A-Z]{2})(?:\b|,\s*United States\b)"
+    )
     for match in pattern.finditer(text):
         state = match.group(2)
         if state in _US_STATES:
             return f"{match.group(1)}, {state}"
-    lowered = text.lower()
-    if "remote" in lowered:
-        return "Remote"
-    if "hybrid" in lowered:
-        return "Hybrid"
     return None
-
-
-def _prefer_remote_location(location: Optional[str], text: str) -> Optional[str]:
-    lowered = text.lower()
-    if (location and "remote" in location.lower()) or "remote" in lowered:
-        return "Remote"
-    return location
 
 
 def _find_work_mode_in_text(text: str) -> Optional[str]:
     lowered = text.lower()
-    if "remote" in lowered:
+    if re.search(r"\b(remote|telecommute|work from home)\b", lowered):
         return "Remote"
-    if "hybrid" in lowered:
+    if re.search(r"\bhybrid\b", lowered):
         return "Hybrid"
-    if (
-        "on-site" in lowered
-        or "onsite" in lowered
-        or "on site" in lowered
-        or "in person" in lowered
-    ):
+    if re.search(r"\b(on-site|onsite|on site|in person)\b", lowered):
         return "On-site"
     return None
 
@@ -346,21 +343,23 @@ def scrape_generic(url: str) -> Dict[str, Optional[str]]:
     soup = BeautifulSoup(resp.text, "html.parser")
 
     job = _parse_jsonld_jobposting(soup)
+    page_text = soup.get_text(" ", strip=True)
+
     if job:
         title = _clean_title(job.get("title"))
         company = None
         hiring_org = job.get("hiringOrganization")
         if isinstance(hiring_org, dict):
             company = hiring_org.get("name")
-        location = _normalize_location(job)
+        work_mode = _normalize_work_mode(job) or _find_work_mode_in_text(page_text)
+
+        location = _clean_location_value(_normalize_location(job))
         if not location:
-            location = _find_location_in_text(soup.get_text(" ", strip=True))
-        location = _prefer_remote_location(location, soup.get_text(" ", strip=True))
+            location = _find_location_in_text(page_text)
+        if not location and work_mode:
+            location = work_mode
         pay = _normalize_salary(job)
         posted = job.get("datePosted")
-        work_mode = _normalize_work_mode(job) or _find_work_mode_in_text(
-            soup.get_text(" ", strip=True)
-        )
         return {
             "url": url,
             "title": title,
@@ -380,19 +379,6 @@ def scrape_generic(url: str) -> Dict[str, Optional[str]]:
     company = split.get("company") or _first_text(
         soup, ["[data-company]", ".company", ".company-name"]
     )
-    location = _first_text(
-        soup,
-        [
-            "span[dir='ltr'] span.tvm__text--low-emphasis",
-            "span.tvm__text--low-emphasis",
-            "[data-location]",
-            ".location",
-            ".job-location",
-        ],
-    )
-    if not location:
-        location = _find_location_in_text(soup.get_text(" ", strip=True))
-    location = _prefer_remote_location(location, soup.get_text(" ", strip=True))
     work_mode_hint = _first_text(
         soup,
         [
@@ -403,7 +389,23 @@ def scrape_generic(url: str) -> Dict[str, Optional[str]]:
     )
     work_mode = _find_work_mode_in_text(work_mode_hint or "")
     if not work_mode:
-        work_mode = _find_work_mode_in_text(soup.get_text(" ", strip=True))
+        work_mode = _find_work_mode_in_text(page_text)
+
+    location = _first_text(
+        soup,
+        [
+            "span[dir='ltr'] span.tvm__text--low-emphasis",
+            "span.tvm__text--low-emphasis",
+            "[data-location]",
+            ".location",
+            ".job-location",
+        ],
+    )
+    location = _clean_location_value(location)
+    if not location:
+        location = _find_location_in_text(page_text)
+    if not location and work_mode:
+        location = work_mode
     pay = _first_text(
         soup,
         [
