@@ -112,6 +112,12 @@ def _clean_location_value(raw: Optional[str]) -> Optional[str]:
     text = re.sub(r"\s+", " ", raw).strip(" ,")
     if not text:
         return None
+    text = re.sub(
+        r"\s*[\(\[]\s*(remote|hybrid|on-site|onsite|on site)\s*[\)\]]\s*$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip(" ,")
     lowered = text.lower()
     if lowered in {"remote", "hybrid", "on-site", "onsite", "on site"}:
         return None
@@ -322,17 +328,66 @@ def _find_location_in_text(text: str) -> Optional[str]:
         state = match.group(2)
         if state in _US_STATES:
             return f"{match.group(1)}, {state}"
+    national = re.search(
+        r"\b([A-Z][a-zA-Z]+(?:[ -][A-Z][a-zA-Z]+)*,\s*(?:United States|USA))\b",
+        text,
+    )
+    if national:
+        return national.group(1)
     return None
 
 
 def _find_work_mode_in_text(text: str) -> Optional[str]:
     lowered = text.lower()
-    if re.search(r"\b(remote|telecommute|work from home)\b", lowered):
+    lowered = re.sub(r"[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]", "-", lowered)
+    lowered = re.sub(r"\s+", " ", lowered)
+    if re.search(r"\b(remote|telecommute|work from home|wfh)\b", lowered):
         return "Remote"
     if re.search(r"\bhybrid\b", lowered):
         return "Hybrid"
-    if re.search(r"\b(on-site|onsite|on site|in person)\b", lowered):
+    if re.search(r"\b(on-?site|on site|in person)\b", lowered):
         return "On-site"
+    return None
+
+
+def _normalize_work_mode_value(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    return _find_work_mode_in_text(value)
+
+
+def _resolve_work_mode(
+    *,
+    explicit_mode: Optional[str],
+    hint_text: Optional[str],
+    page_text: str,
+    location: Optional[str],
+) -> Optional[str]:
+    candidates = [
+        _normalize_work_mode_value(explicit_mode),
+        _find_work_mode_in_text(hint_text or ""),
+        _find_work_mode_in_text(page_text),
+    ]
+    for candidate in candidates:
+        if candidate:
+            return candidate
+    return None
+
+
+def _find_pay_in_text(text: str) -> Optional[str]:
+    compact = re.sub(r"\s+", " ", text)
+    patterns = [
+        r"(\$\s?\d[\d,]*(?:\.\d+)?\s*(?:-|to|–|—)\s*\$?\s?\d[\d,]*(?:\.\d+)?\s*(?:per\s*(?:year|hour)|a\s*(?:year|hour)|/\s*(?:yr|year|hr|hour))?)",
+        r"(\$\s?\d[\d,]*(?:\.\d+)?\s*(?:per\s*(?:year|hour)|a\s*(?:year|hour)|/\s*(?:yr|year|hr|hour)))",
+        r"(\d[\d,]*(?:\.\d+)?\s*(?:-|to|–|—)\s*\d[\d,]*(?:\.\d+)?\s*(?:USD|US Dollars|per\s*(?:year|hour)|a\s*(?:year|hour)|/\s*(?:yr|year|hr|hour)))",
+        r"(\d[\d,]*(?:\.\d+)?\s*(?:USD|US Dollars)\s*(?:per\s*(?:year|hour)|a\s*(?:year|hour)|/\s*(?:yr|year|hr|hour))?)",
+        r"(\$\s?\d[\d,]*(?:\.\d+)?\s*[kK]\s*(?:-|to|–|—)\s*\$?\s?\d[\d,]*(?:\.\d+)?\s*[kK])",
+        r"(\$\s?\d[\d,]*(?:\.\d+)?\s*[kK])",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, compact, flags=re.IGNORECASE)
+        if match:
+            return _normalize_salary_text(match.group(1))
     return None
 
 
@@ -351,14 +406,18 @@ def scrape_generic(url: str) -> Dict[str, Optional[str]]:
         hiring_org = job.get("hiringOrganization")
         if isinstance(hiring_org, dict):
             company = hiring_org.get("name")
-        work_mode = _normalize_work_mode(job) or _find_work_mode_in_text(page_text)
-
         location = _clean_location_value(_normalize_location(job))
         if not location:
             location = _find_location_in_text(page_text)
+        work_mode = _resolve_work_mode(
+            explicit_mode=_normalize_work_mode(job),
+            hint_text=None,
+            page_text=page_text,
+            location=location,
+        )
         if not location and work_mode:
             location = work_mode
-        pay = _normalize_salary(job)
+        pay = _normalize_salary(job) or _find_pay_in_text(page_text)
         posted = job.get("datePosted")
         return {
             "url": url,
@@ -382,18 +441,18 @@ def scrape_generic(url: str) -> Dict[str, Optional[str]]:
     work_mode_hint = _first_text(
         soup,
         [
+            "svg#check-small + span",
             ".job-details-fit-level-preferences button span.tvm__text--low-emphasis strong",
             "span[aria-hidden='true'] span.tvm__text--low-emphasis strong",
             "span.tvm__text--low-emphasis strong",
         ],
     )
-    work_mode = _find_work_mode_in_text(work_mode_hint or "")
-    if not work_mode:
-        work_mode = _find_work_mode_in_text(page_text)
-
     location = _first_text(
         soup,
         [
+            ".job-details-jobs-unified-top-card__primary-description-container span",
+            ".topcard__flavor--bullet",
+            ".topcard__flavor.topcard__flavor--bullet",
             "span[dir='ltr'] span.tvm__text--low-emphasis",
             "span.tvm__text--low-emphasis",
             "[data-location]",
@@ -404,11 +463,19 @@ def scrape_generic(url: str) -> Dict[str, Optional[str]]:
     location = _clean_location_value(location)
     if not location:
         location = _find_location_in_text(page_text)
+    work_mode = _resolve_work_mode(
+        explicit_mode=None,
+        hint_text=work_mode_hint,
+        page_text=page_text,
+        location=location,
+    )
     if not location and work_mode:
         location = work_mode
     pay = _first_text(
         soup,
         [
+            ".job-details-salary",
+            ".salary-main-rail-card__salary",
             "span.tvm__text--low-emphasis strong",
             "[data-salary]",
             ".salary",
@@ -417,6 +484,8 @@ def scrape_generic(url: str) -> Dict[str, Optional[str]]:
     )
     if pay:
         pay = _normalize_salary_text(pay)
+    if not pay:
+        pay = _find_pay_in_text(page_text)
 
     return {
         "url": url,
